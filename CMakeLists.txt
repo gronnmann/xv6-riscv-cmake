@@ -4,10 +4,13 @@ project(xv6 C ASM)
 # Setup GCC
 
 message(STATUS "Using GCC: ${CMAKE_C_COMPILER}")
+message(STATUS "Source dir: " ${CMAKE_SOURCE_DIR})
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Werror -O -fno-omit-frame-pointer -ggdb -gdwarf-2")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -I.")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -z max-page-size=4096")
+
 execute_process(COMMAND ${CMAKE_C_COMPILER} -fno-stack-protector -E -x c /dev/null OUTPUT_VARIABLE stack_protector_output ERROR_QUIET)
 if (stack_protector_output)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-stack-protector")
@@ -40,7 +43,7 @@ set(LDFLAGS "-z max-page-size=4096")
 
 message(STATUS "objcopy: ${OBJCOPY}")
 message(STATUS "objdump: ${OBJDUMP}")
-message(STATUS "ld: ${OBJDUMP}")
+message(STATUS "ld: ${LD}") # TODO are we even using this
 
 
 # Define userspace and kernel files
@@ -74,6 +77,24 @@ set(KERNEL_SOURCE_FILES
         kernel/plic.c
         kernel/virtio_disk.c
 )
+
+SET(USER_EXECUTABLES
+    U/_cat
+	U/_echo
+	U/_forktest
+	U/_grep
+	U/_init
+	U/_kill
+	U/_ln
+	U/_ls
+	U/_mkdir
+	U/_rm
+	U/_sh
+	U/_stressfs
+	U/_usertests
+	U/_grind
+	U/_wc
+	U/_zombie)
 # Add kernel executable
 message(STATUS "Building kernel...")
 
@@ -85,8 +106,6 @@ set_target_properties(kernel PROPERTIES LINK_FLAGS "-e _entry")
 set_target_properties(kernel PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
-
-message(STATUS "SED cmd: ${SED_CMD}")
 
 # TODO - CMAke seems to escape all the weird characters in the sed command.
 # make it run on cmake instead of the .sh file.
@@ -101,15 +120,38 @@ add_custom_command(
 )
 
 # User initcode
-add_executable(initcode user/initcode.S)
-set_target_properties(initcode PROPERTIES LINK_FLAGS "-e _start")
+
+add_library(initcode OBJECT user/initcode.S) # TODO - objcopy and objdump?
+#add_executable(initcode user/initcode.S)
+##set_target_properties(initcode PROPERTIES LINK_FLAGS "-e _start")
 target_compile_options(initcode PRIVATE -march=rv64g -nostdinc)
 target_include_directories(initcode PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/kernel)
-target_link_options(initcode PRIVATE -T ${CMAKE_SOURCE_DIR}/kernel/kernel.ld)
+
+set_target_properties(initcode PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+#add_custom_command(
+#        TARGET initcode
+#        POST_BUILD
+#        COMMAND ${OBJDUMP} -S ${CMAKE_BINARY_DIR}/initcode > ${CMAKE_BINARY_DIR}/initcode.asm
+#        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+#)
 
 add_custom_command(
-        TARGET initcode
-        POST_BUILD
-        COMMAND ${OBJDUMP} -S ${CMAKE_BINARY_DIR}/initcode > ${CMAKE_BINARY_DIR}/initcode.asm
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        OUTPUT user/usys.S
+		COMMAND mkdir user
+        COMMAND perl ${CMAKE_SOURCE_DIR}/user/usys.pl > user/usys.S
+        DEPENDS user/usys.pl
+		WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
+add_custom_target(usys_perl_to_c)
+
+add_library(usys OBJECT user/usys.S)
+target_include_directories(usys PRIVATE ${CMAKE_SOURCE_DIR})
+
+add_dependencies(usys usys_perl_to_c)
+
+#add_custom_target(usys DEPENDS user/usys.S)
+
+#add_library(ulib user/ulib.c user/usys.o user/printf.c user/umalloc.c)
